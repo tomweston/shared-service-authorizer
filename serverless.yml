@@ -1,0 +1,231 @@
+service: shared-service-authorizer
+
+plugins:
+  - serverless-go-plugin
+
+provider:
+  name: aws
+  region: eu-west-2
+
+functions:
+  Authorizer:
+    runtime: go1.x
+    handler: api/Authorizer/main.go
+    name: Authorizer
+    description: Lambda Authorizer for the application plane API Gateway
+    role:
+      'Fn::GetAtt': [AuthorizerLambdaRole, Arn]
+
+  CreateHelloItem:
+    runtime: go1.x
+    handler: api/v1/Hello/CreateHelloItem/main.go
+    name: CreateHelloItem
+    description: Looks up caller IP address and writes geolocation data to DynamoDB
+    environment:
+      IPINFO_TOKEN: ${env:IPINFO_TOKEN}
+    role:
+      'Fn::GetAtt': [CreateHelloItemLambdaRole, Arn]
+    events:
+      - http:
+          path: /v1/hello
+          method: post
+          authorizer:
+            type: CUSTOM
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+
+resources:
+  Resources:
+
+    ApiGatewayRestApi:
+      Type: 'AWS::ApiGateway::RestApi'
+      Properties:
+        Name: 'SharedServices'
+        Description: 'API Gateway for Shared Services'
+        FailOnWarnings: true
+        EndpointConfiguration:
+          Types:
+            - REGIONAL
+
+    ApiGatewayAuthorizer:
+      Type: 'AWS::ApiGateway::Authorizer'
+      Properties:
+        Name: 'ApiGatewayAuthorizer'
+        AuthorizerResultTtlInSeconds: 0 # Disable caching for multi-tenant support
+        IdentityValidationExpression: '^[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+$'
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        Type: REQUEST
+        AuthorizerUri:
+          Fn::Sub:
+            - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunctionName}/invocations'
+            - LambdaFunctionName: Authorizer
+
+
+    AuthorizerApiGatewayResponse:
+      Type: "AWS::ApiGateway::GatewayResponse"
+      Properties:
+        ResponseParameters:
+          "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
+          "gatewayresponse.header.Access-Control-Allow-Headers": "'*'"
+          "gatewayresponse.header.Access-Control-Allow-Methods": "'*'"
+          "gatewayresponse.header.Access-Control-Allow-Credentials": "'true'"
+          "gatewayresponse.header.Access-Control-Expose-Headers": "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId: {"Ref" : "ApiGatewayRestApi"}
+
+
+    AuthorizerLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: AuthorizerLambdaRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+                  - apigateway.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: AuthorizerLambdaPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - '*'
+                  Resource: '*'
+
+    AuthorizerAccessRole:
+      Type: AWS::IAM::Role
+      DependsOn: AuthorizerLambdaRole
+      Properties:
+        RoleName: AuthorizerAccessRole
+        Path: '/'
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS:
+                  Fn::GetAtt: [AuthorizerLambdaRole, Arn]
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: AuthorizerAccessRolePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:BatchGetItem
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:DeleteItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                  Resource:
+                    Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+                - Effect: Allow
+                  Action:
+                    - sts:AssumeRole
+                  Resource:
+                    Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/*
+
+    LambdaApiGatewayInvoke:
+      Type: 'AWS::Lambda::Permission'
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: 
+          Fn::GetAtt: 
+            - AuthorizerLambdaFunction
+            - Arn
+        Principal: apigateway.amazonaws.com
+
+    CreateHelloItemLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: CreateHelloItemLambdaRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+                  - apigateway.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: CreateHelloItemLambdaRolePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:BatchGetItem
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:DeleteItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                  Resource:
+                    Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+          - PolicyName: CreateHelloItemLambdaLoggingPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Sub:
+                        - 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*:*'
+                        - {}
+
+    # SharedServices follows a Single Table Design
+    # https://www.alexdebrie.com/posts/dynamodb-single-table/
+
+    SharedServices:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: SharedServices
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: SK
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+  Outputs:
+    SharedServices:
+      Value:
+        Fn::GetAtt:
+          - SharedServices
+          - Arn
+    AuthorizerLambdaRole:
+      Value:
+        Ref: AuthorizerLambdaRole
