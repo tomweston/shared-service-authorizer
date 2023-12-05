@@ -8,7 +8,11 @@
 [Contributing](#-contributing) •
 [License](#-license)
 
-The Shared Service Authorizer is inspired by the AWS SaaS Factory Serverless SaaS Identity and Isolation Patterns Lambda function invoked by API Gateway to authorize requests. It performs the following:
+The Shared Service Authorizer is inspired by the AWS SaaS Factory Serverless SaaS Identity and Isolation Patterns Lambda function invoked by API Gateway to authorize requests.
+
+</div>
+
+## Overview
 
 - Validates JWT tokens.
 - Generates STS credentials and an IAM policy for tenants.
@@ -22,8 +26,6 @@ The Shared Service Authorizer is inspired by the AWS SaaS Factory Serverless Saa
 - Customizable for different regions and service identifiers.
 
 [Saas Identity and Isolation Patterns](./docs/SaaS_tenant_isolation_patterns.pdf)
-
-</div>
 
 ## Serverless Configuration
 
