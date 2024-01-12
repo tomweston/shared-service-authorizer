@@ -270,7 +270,7 @@ func (c *CognitoJWTClaim) GetAudience() (jwt.ClaimStrings, error) {
 }
 
 func (c *CognitoJWTClaim) GetNotBefore() (*jwt.NumericDate, error) {
-	// Your JWT does not contain a "nbf" claim, so keep this method stubbed out
+	// Cognito does not set NotBefore
 	return nil, nil
 }
 
